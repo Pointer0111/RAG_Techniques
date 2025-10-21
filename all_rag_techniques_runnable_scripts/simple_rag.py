@@ -3,6 +3,7 @@ import sys
 import argparse
 import time
 from dotenv import load_dotenv
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Add the parent directory to the path since we work with notebooks
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
@@ -12,7 +13,6 @@ from evaluation.evalute_rag import *
 
 # Load environment variables from a .env file (e.g., OpenAI API key)
 load_dotenv()
-os.environ["OPENAI_API_KEY"] = os.getenv('OPENAI_API_KEY')
 
 
 class SimpleRAG:
@@ -75,7 +75,7 @@ def validate_args(args):
 # Function to parse command line arguments
 def parse_args():
     parser = argparse.ArgumentParser(description="Encode a PDF document and test a simple RAG.")
-    parser.add_argument("--path", type=str, default="../data/Understanding_Climate_Change.pdf",
+    parser.add_argument("--path", type=str, default="./data/Understanding_Climate_Change.pdf",
                         help="Path to the PDF file to encode.")
     parser.add_argument("--chunk_size", type=int, default=1000,
                         help="Size of each text chunk (default: 1000).")

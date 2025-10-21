@@ -1,21 +1,17 @@
-import os
+# 10.21: 已跑通
+
+
 import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import argparse
-from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain.tools import DuckDuckGoSearchResults
+from langchain_deepseek import ChatDeepSeek
+from pydantic import BaseModel, Field
+from langchain_community.tools import DuckDuckGoSearchResults
 from helper_functions import encode_pdf
 import json
-
-sys.path.append(os.path.abspath(
-    os.path.join(os.getcwd(), '..')))  # Add the parent directory to the path since we work with notebooks
-
-# Load environment variables from a .env file
-load_dotenv()
-os.environ["OPENAI_API_KEY"] = os.getenv('OPENAI_API_KEY')
-
 
 class RetrievalEvaluatorInput(BaseModel):
     """
@@ -44,7 +40,7 @@ class CRAG:
     A class to handle the CRAG process for document retrieval, evaluation, and knowledge refinement.
     """
 
-    def __init__(self, path, model="gpt-4o-mini", max_tokens=1000, temperature=0, lower_threshold=0.3,
+    def __init__(self, path, model, max_tokens=1000, temperature=0, lower_threshold=0.3,
                  upper_threshold=0.7):
         """
         Initializes the CRAG Retriever by encoding the PDF document and creating the necessary models and search tools.
@@ -63,11 +59,17 @@ class CRAG:
         self.upper_threshold = upper_threshold
 
         # Encode the PDF document into a vector store
-        self.vectorstore = encode_pdf(path)
+        self.vectorstore = encode_pdf(path, embedding_provider="dashscope")
 
-        # Initialize OpenAI language model
-        self.llm = ChatOpenAI(model=model, max_tokens=max_tokens, temperature=temperature)
-
+        # Initialize DeepSeek language model
+        self.llm = ChatDeepSeek(
+            model="deepseek-chat",
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=2,
+            # other params...
+        )
         # Initialize search tool
         self.search = DuckDuckGoSearchResults()
 
@@ -82,8 +84,11 @@ class CRAG:
     def retrieval_evaluator(self, query, document):
         prompt = PromptTemplate(
             input_variables=["query", "document"],
-            template="On a scale from 0 to 1, how relevant is the following document to the query? "
-                     "Query: {query}\nDocument: {document}\nRelevance score:"
+            template=(
+                "On a scale from 0 to 1, how relevant is the following document to the query? "
+                "Only return a JSON object in the following format: {{\"relevance_score\": <float between 0 and 1>}}.\n"
+                "Query: {query}\nDocument: {document}\nRelevance score:"
+            )
         )
         chain = prompt | self.llm.with_structured_output(RetrievalEvaluatorInput)
         input_variables = {"query": query, "document": document}
@@ -155,12 +160,12 @@ class CRAG:
         max_score = max(eval_scores)
         sources = []
 
-        if max_score > self.upper_threshold:
+        if (max_score > self.upper_threshold):
             print("\nAction: Correct - Using retrieved document")
             best_doc = retrieved_docs[eval_scores.index(max_score)]
             final_knowledge = best_doc
             sources.append(("Retrieved document", ""))
-        elif max_score < self.lower_threshold:
+        elif (max_score < self.lower_threshold):
             print("\nAction: Incorrect - Performing web search")
             final_knowledge, sources = self.perform_web_search(query)
         else:
@@ -196,7 +201,7 @@ def validate_args(args):
 # Function to parse command line arguments
 def parse_args():
     parser = argparse.ArgumentParser(description="CRAG Process for Document Retrieval and Query Answering.")
-    parser.add_argument("--path", type=str, default="../data/Understanding_Climate_Change.pdf",
+    parser.add_argument("--path", type=str, default="./data/Understanding_Climate_Change.pdf",
                         help="Path to the PDF file to encode.")
     parser.add_argument("--model", type=str, default="gpt-4o-mini",
                         help="Language model to use (default: gpt-4o-mini).")

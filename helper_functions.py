@@ -1,9 +1,9 @@
-from langchain.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain import PromptTemplate
+from langchain_community.vectorstores import FAISS
+from pydantic import BaseModel, Field
+from langchain_core.prompts import PromptTemplate
 from openai import RateLimitError
 from typing import List
 from rank_bm25 import BM25Okapi
@@ -13,6 +13,41 @@ import random
 import textwrap
 import numpy as np
 from enum import Enum
+
+
+class DashScopeEmbeddings:
+    def __init__(self, model="text-embedding-v4", dimension=1024):
+        self.model = model
+        self.dimension = dimension
+
+    def embed_documents(self, texts):
+        import dashscope
+        batch_size = 10
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            resp = dashscope.TextEmbedding.call(
+                model=self.model,
+                input=batch,
+                dimension=self.dimension
+            )
+            if not resp or not hasattr(resp, "output") or not resp.output or "embeddings" not in resp.output:
+                raise RuntimeError(f"DashScope embedding failed, resp: {resp}")
+            all_embeddings.extend([item['embedding'] for item in resp.output['embeddings']])
+        return all_embeddings
+
+    def embed_query(self, text):
+        import dashscope
+        resp = dashscope.TextEmbedding.call(
+            model=self.model,
+            input=[text],  # 这里也用列表，保持一致
+            dimension=self.dimension
+        )
+        return resp.output['embeddings'][0]['embedding']
+
+    def __call__(self, text):
+        # 让对象可直接调用，返回单条 embedding
+        return self.embed_query(text)
 
 
 def replace_t_with_space(list_of_documents):
@@ -45,14 +80,15 @@ def text_wrap(text, width=120):
     return textwrap.fill(text, width=width)
 
 
-def encode_pdf(path, chunk_size=1000, chunk_overlap=200):
+def encode_pdf(path, chunk_size=1000, chunk_overlap=200, embedding_provider="dashscope"):
     """
-    Encodes a PDF book into a vector store using OpenAI embeddings.
+    Encodes a PDF book into a vector store using specified embeddings.
 
     Args:
         path: The path to the PDF file.
         chunk_size: The desired size of each text chunk.
         chunk_overlap: The amount of overlap between consecutive chunks.
+        embedding_provider: The embedding provider to use.
 
     Returns:
         A FAISS vector store containing the encoded book content.
@@ -69,8 +105,14 @@ def encode_pdf(path, chunk_size=1000, chunk_overlap=200):
     texts = text_splitter.split_documents(documents)
     cleaned_texts = replace_t_with_space(texts)
 
-    # Create embeddings and vector store
-    embeddings = OpenAIEmbeddings()
+    # Create embeddings based on the specified provider
+    if embedding_provider == "dashscope":
+        embeddings = DashScopeEmbeddings()
+    elif embedding_provider == "openai":
+        embeddings = OpenAIEmbeddings()
+    # Add other providers as needed...
+
+    # Create vector store
     vectorstore = FAISS.from_documents(cleaned_texts, embeddings)
 
     return vectorstore

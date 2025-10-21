@@ -22,7 +22,7 @@ from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-
+from deepeval.metrics.utils import should_use_deepseek_model
 # 09/15/24 kimmeyh Added path where helper functions is located to the path
 # Add the parent directory to the path since we work with notebooks
 import sys
@@ -70,7 +70,7 @@ def create_deep_eval_test_cases(
 # Define evaluation metrics
 correctness_metric = GEval(
     name="Correctness",
-    model="gpt-4-turbo",
+    model="deepseek-chat",
     evaluation_params=[
         LLMTestCaseParams.EXPECTED_OUTPUT,
         LLMTestCaseParams.ACTUAL_OUTPUT
@@ -82,13 +82,13 @@ correctness_metric = GEval(
 
 faithfulness_metric = FaithfulnessMetric(
     threshold=0.7,
-    model="gpt-4-turbo",
+    model="deepseek-chat",
     include_reason=False
 )
 
 relevance_metric = ContextualRelevancyMetric(
     threshold=1,
-    model="gpt-4-turbo",
+    model="deepseek-chat",
     include_reason=True
 )
 
@@ -105,7 +105,10 @@ def evaluate_rag(retriever, num_questions: int = 5) -> Dict[str, Any]:
     """
     
     # Initialize LLM
-    llm = ChatOpenAI(temperature=0, model_name="gpt-4-turbo-preview")
+    llm = ChatOpenAI(temperature=0, 
+                     model_name="qwen-plus",
+                     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                     api_key=os.getenv("DASHSCOPE_API_KEY"))
     
     # Create evaluation prompt
     eval_prompt = PromptTemplate.from_template("""
