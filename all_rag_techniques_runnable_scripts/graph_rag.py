@@ -1,10 +1,9 @@
 import networkx as nx
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import PromptTemplate
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
-from langchain.callbacks import get_openai_callback
 
 from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
@@ -12,7 +11,7 @@ import matplotlib.patches as patches
 import os
 import sys
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
+from langchain_deepseek import ChatDeepSeek
 from typing import List, Tuple, Dict
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
@@ -30,16 +29,15 @@ from spacy.lang.en import English
 
 sys.path.append(os.path.abspath(
     os.path.join(os.getcwd(), '..')))  # Add the parent directory to the path sicnce we work with notebooks
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from helper_functions import *
 from evaluation.evalute_rag import *
-
 # Load environment variables from a .env file
 load_dotenv()
 
-# Set the OpenAI API key environment variable
-os.environ["OPENAI_API_KEY"] = os.getenv('OPENAI_API_KEY')
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
+nltk.download('omw-1.4', quiet=True)
 nltk.download('punkt', quiet=True)
 nltk.download('wordnet', quiet=True)
 
@@ -56,7 +54,7 @@ class DocumentProcessor:
         - embeddings: An instance of OpenAIEmbeddings used for embedding documents.
         """
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        self.embeddings = OpenAIEmbeddings()
+        self.embeddings = DashScopeEmbeddings()
 
     def process_documents(self, documents):
         """
@@ -128,7 +126,7 @@ class KnowledgeGraph:
         self.lemmatizer = WordNetLemmatizer()
         self.concept_cache = {}
         self.nlp = self._load_spacy_model()
-        self.edges_threshold = 0.8
+        self.edges_threshold = 0.5 # 我们试一下调低阈值
 
     def build_graph(self, splits, llm, embedding_model):
         """
@@ -267,6 +265,7 @@ class KnowledgeGraph:
         - None
         """
         similarity_matrix = self._compute_similarities(embeddings)
+        print("Similarity matrix:\n", similarity_matrix)
         num_nodes = len(self.graph.nodes)
 
         for node1 in tqdm(range(num_nodes), desc="Adding edges"):
@@ -536,31 +535,25 @@ class QueryEngine:
           - traversal_path (list): The traversal path of nodes in the knowledge graph.
           - filtered_content (dict): The filtered content of nodes.
         """
-        with get_openai_callback() as cb:
-            print(f"\nProcessing query: {query}")
-            relevant_docs = self._retrieve_relevant_documents(query)
-            expanded_context, traversal_path, filtered_content, final_answer = self._expand_context(query,
-                                                                                                    relevant_docs)
+        print(f"\nProcessing query: {query}")
+        relevant_docs = self._retrieve_relevant_documents(query)
+        expanded_context, traversal_path, filtered_content, final_answer = self._expand_context(query,
+                                                                                                relevant_docs)
 
-            if not final_answer:
-                print("\nGenerating final answer...")
-                response_prompt = PromptTemplate(
-                    input_variables=["query", "context"],
-                    template="Based on the following context, please answer the query.\n\nContext: {context}\n\nQuery: {query}\n\nAnswer:"
-                )
+        if not final_answer:
+            print("\nGenerating final answer...")
+            response_prompt = PromptTemplate(
+                input_variables=["query", "context"],
+                template="Based on the following context, please answer the query.\n\nContext: {context}\n\nQuery: {query}\n\nAnswer:"
+            )
 
-                response_chain = response_prompt | self.llm
-                input_data = {"query": query, "context": expanded_context}
-                response = response_chain.invoke(input_data)
-                final_answer = response
-            else:
-                print("\nComplete answer found during traversal.")
+            response_chain = response_prompt | self.llm
+            input_data = {"query": query, "context": expanded_context}
+            response = response_chain.invoke(input_data)
+            final_answer = response
+        else:
+            print("\nComplete answer found during traversal.")
 
-            print(f"\nFinal Answer: {final_answer}")
-            print(f"\nTotal Tokens: {cb.total_tokens}")
-            print(f"Prompt Tokens: {cb.prompt_tokens}")
-            print(f"Completion Tokens: {cb.completion_tokens}")
-            print(f"Total Cost (USD): ${cb.total_cost}")
 
         return final_answer, traversal_path, filtered_content
 
@@ -688,11 +681,12 @@ class Visualizer:
         ax.axis('off')
 
         # Add colorbar for edge weights
-        sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues,
-                                   norm=plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights)))
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=ax, orientation='vertical', fraction=0.046, pad=0.04)
-        cbar.set_label('Edge Weight', rotation=270, labelpad=15)
+        if edge_weights:
+            sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues,
+                                       norm=plt.Normalize(vmin=min(edge_weights), vmax=max(edge_weights)))
+            sm.set_array([])
+            cbar = fig.colorbar(sm, ax=ax, orientation='vertical', fraction=0.046, pad=0.04)
+            cbar.set_label('Edge Weight', rotation=270, labelpad=15)
 
         # Add legend
         regular_line = plt.Line2D([0], [0], color='blue', linewidth=2, label='Regular Edge')
@@ -706,7 +700,7 @@ class Visualizer:
         legend.get_frame().set_alpha(0.8)
 
         plt.tight_layout()
-        plt.show()
+        plt.savefig("graph_traversal.png")
 
     @staticmethod
     def print_filtered_content(traversal_path, filtered_content):
@@ -746,8 +740,15 @@ class GraphRAG:
         - query_engine: An instance of the QueryEngine class for handling queries (initialized as None).
         - visualizer: An instance of the Visualizer class for visualizing the knowledge graph traversal.
         """
-        self.llm = ChatOpenAI(temperature=0, model_name="gpt-4o-mini", max_tokens=4000)
-        self.embedding_model = OpenAIEmbeddings()
+        self.llm = ChatDeepSeek(
+            model="deepseek-chat",
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=2,
+            # other params...
+        )
+        self.embedding_model = DashScopeEmbeddings()
         self.document_processor = DocumentProcessor()
         self.knowledge_graph = KnowledgeGraph()
         self.query_engine = None
@@ -791,7 +792,7 @@ class GraphRAG:
 # Argument parsing
 def parse_args():
     parser = argparse.ArgumentParser(description="GraphRAG system")
-    parser.add_argument('--path', type=str, default="../data/Understanding_Climate_Change.pdf",
+    parser.add_argument('--path', type=str, default="./data/Understanding_Climate_Change.pdf",
                         help='Path to the PDF file.')
     parser.add_argument('--query', type=str, default='what is the main cause of climate change?',
                         help='Query to retrieve documents.')
