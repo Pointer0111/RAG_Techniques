@@ -65,8 +65,6 @@ class CRAG:
         self.llm = ChatDeepSeek(
             model="deepseek-chat",
             temperature=0,
-            max_tokens=None,
-            timeout=None,
             max_retries=2,
             # other params...
         )
